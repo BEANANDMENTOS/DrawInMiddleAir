@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="theme-color" content="#0b0d12" />
-<title>กล้องเว็บ — ถ่าย & บันทึก</title>
+<title>DrawInMiddleAir — จีบนิ้ววาดกลางอากาศ</title>
 <style>
   :root {
     --bg: #0b0d12;
@@ -14,6 +14,7 @@
     --text: #f5f7fa;
     --muted: #9aa3b2;
     --danger: #ff5d5d;
+    --good: #34c759;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; height: 100%; }
@@ -30,18 +31,17 @@
 
   header {
     flex: 0 0 auto;
-    padding: 14px 18px;
-    padding-top: max(14px, env(safe-area-inset-top));
+    padding: 12px 18px;
+    padding-top: max(12px, env(safe-area-inset-top));
     display: flex;
     align-items: center;
     gap: 10px;
     font-weight: 600;
-    font-size: 17px;
-    letter-spacing: .2px;
+    font-size: 16px;
   }
   header .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
 
-  /* ---- Camera stage ---- */
+  /* ---- Stage ---- */
   #stage {
     flex: 1 1 auto;
     position: relative;
@@ -51,333 +51,512 @@
     background: #000;
     overflow: hidden;
   }
-  #video, #photo {
+  #video {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    opacity: 0;
+    z-index: 0;
+  }
+  #display {
+    position: relative;
+    z-index: 1;
     max-width: 100%;
     max-height: 100%;
-    object-fit: contain;
     display: block;
   }
-  #video.mirror { transform: scaleX(-1); }
 
-  /* capture flash */
-  #flash {
-    position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none;
-  }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5; }
   #flash.fire { animation: flash .35s ease-out; }
   @keyframes flash { 0% { opacity: .9; } 100% { opacity: 0; } }
 
-  /* ---- Overlays (loading / error) ---- */
+  #status {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 4; padding: 8px 16px; border-radius: 999px;
+    background: var(--panel); backdrop-filter: blur(8px);
+    font-size: 14px; font-weight: 600; white-space: nowrap;
+    display: flex; align-items: center; gap: 7px;
+    transition: background .2s;
+  }
+  #status.drawing { background: rgba(52,199,89,.85); }
+
+  #camName {
+    position: absolute; top: 12px; left: 12px; z-index: 4;
+    max-width: 50%; padding: 6px 12px; border-radius: 999px;
+    background: var(--panel); backdrop-filter: blur(8px);
+    font-size: 12.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: none; align-items: center;
+  }
+
+  #toolbar {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 4; display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 999px;
+    background: var(--panel); backdrop-filter: blur(8px);
+  }
+  .swatch {
+    width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+    border: 2.5px solid transparent; transition: transform .08s;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+  }
+  .swatch:active { transform: scale(.9); }
+  .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.4); }
+  #clearBtn { background: rgba(255,255,255,.12); color: var(--text); }
+
   #overlay {
-    position: absolute; inset: 0;
+    position: absolute; inset: 0; z-index: 6;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 18px; text-align: center; padding: 24px;
     background: rgba(5, 7, 11, .9);
   }
   #overlay.hidden { display: none; }
-  .spinner {
-    width: 42px; height: 42px; border-radius: 50%;
-    border: 3px solid rgba(255,255,255,.18); border-top-color: var(--accent);
-    animation: spin 0.9s linear infinite;
-  }
+  .spinner { width: 42px; height: 42px; border-radius: 50%; border: 3px solid rgba(255,255,255,.18); border-top-color: var(--accent); animation: spin .9s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #overlayMsg { color: var(--muted); max-width: 460px; line-height: 1.6; font-size: 15px; }
   #overlayMsg.error { color: var(--danger); }
 
-  /* ---- Preview (after capture) ---- */
-  #preview {
-    position: absolute; inset: 0; display: none;
-    flex-direction: column; align-items: center; justify-content: center;
-    background: #000;
-  }
+  #preview { position: absolute; inset: 0; z-index: 7; display: none; flex-direction: column; align-items: center; justify-content: center; background: #000; }
   #preview.show { display: flex; }
+  #photo { max-width: 100%; max-height: 100%; object-fit: contain; }
 
-  /* ---- Buttons ---- */
-  button {
-    font-family: inherit; cursor: pointer; border: none; color: var(--text);
-    transition: transform .08s ease, background .15s ease, opacity .15s ease;
-  }
+  button { font-family: inherit; cursor: pointer; border: none; color: var(--text); transition: transform .08s ease, background .15s ease, opacity .15s ease; }
   button:active { transform: scale(.94); }
 
   .controls {
-    flex: 0 0 auto;
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 18px 32px;
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
-    gap: 16px;
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 32px; padding-bottom: max(16px, env(safe-area-inset-bottom)); gap: 16px;
   }
   .icon-btn {
-    width: 56px; height: 56px; border-radius: 50%;
-    background: var(--panel); backdrop-filter: blur(8px);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 24px;
+    width: 54px; height: 54px; border-radius: 50%; background: var(--panel); backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center; font-size: 23px;
   }
   .icon-btn:disabled { opacity: .35; cursor: default; }
+  .icon-btn.on { background: var(--accent); }
 
-  /* shutter */
-  #shutter {
-    width: 76px; height: 76px; border-radius: 50%;
-    background: #fff; padding: 0;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 0 7px #fff;
-  }
-  #shutter::after {
-    content: ""; width: 60px; height: 60px; border-radius: 50%;
-    background: #fff; border: 2px solid #0b0d12;
-  }
+  #shutter { width: 74px; height: 74px; border-radius: 50%; background: #fff; padding: 0; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 0 7px #fff; }
+  #shutter::after { content: ""; width: 58px; height: 58px; border-radius: 50%; background: #fff; border: 2px solid #0b0d12; }
   #shutter:disabled { opacity: .4; cursor: default; }
 
-  .spacer { width: 56px; height: 56px; }
-
-  /* preview action bar */
-  .preview-actions {
-    display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
-    padding: 18px;
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
-  }
-  .pill {
-    padding: 14px 22px; border-radius: 999px; font-size: 16px; font-weight: 600;
-    display: inline-flex; align-items: center; gap: 8px;
-  }
+  .preview-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; padding: 18px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .pill { padding: 14px 22px; border-radius: 999px; font-size: 16px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
   .pill.primary { background: var(--accent); }
   .pill.secondary { background: var(--panel); }
   .pill.ghost { background: transparent; border: 1.5px solid rgba(255,255,255,.25); }
-
-  .retry-btn {
-    background: var(--accent); padding: 12px 24px; border-radius: 999px;
-    font-size: 16px; font-weight: 600;
-  }
-
+  .retry-btn { background: var(--accent); padding: 12px 24px; border-radius: 999px; font-size: 16px; font-weight: 600; }
   .hint { font-size: 12.5px; color: var(--muted); text-align: center; padding: 0 18px 10px; }
 </style>
 </head>
 <body>
-  <header><span class="dot"></span> กล้องเว็บ — ถ่าย &amp; บันทึก</header>
+  <header><span class="dot"></span> DrawInMiddleAir — จีบนิ้ววาดกลางอากาศ ✍️</header>
 
   <div id="stage">
     <video id="video" autoplay muted playsinline></video>
+    <canvas id="display"></canvas>
     <div id="flash"></div>
 
-    <!-- loading / error overlay -->
+    <div id="camName"></div>
+    <div id="status">⏳ กำลังเริ่มต้น…</div>
+
+    <div id="toolbar">
+      <div class="swatch active" data-color="#ffffff" style="background:#ffffff"></div>
+      <div class="swatch" data-color="#ff3b30" style="background:#ff3b30"></div>
+      <div class="swatch" data-color="#ffd60a" style="background:#ffd60a"></div>
+      <div class="swatch" data-color="#34c759" style="background:#34c759"></div>
+      <div class="swatch" data-color="#0a84ff" style="background:#0a84ff"></div>
+      <div class="swatch" data-color="eraser" title="ยางลบ">🧽</div>
+      <button class="swatch" id="clearBtn" title="ล้างทั้งหมด">🗑️</button>
+    </div>
+
     <div id="overlay">
       <div class="spinner" id="spinner"></div>
       <div id="overlayMsg">กำลังเปิดกล้อง…</div>
       <button class="retry-btn" id="retryBtn" style="display:none">เปิดกล้อง</button>
     </div>
 
-    <!-- captured photo preview -->
-    <div id="preview">
-      <img id="photo" alt="รูปที่ถ่าย" />
-    </div>
+    <div id="preview"><img id="photo" alt="ผลงาน" /></div>
   </div>
 
-  <!-- live controls -->
   <div class="controls" id="liveControls">
     <button class="icon-btn" id="switchBtn" title="สลับกล้อง" aria-label="สลับกล้อง">🔄</button>
-    <button id="shutter" title="ถ่ายรูป (Space)" aria-label="ถ่ายรูป"></button>
-    <div class="spacer"></div>
+    <button id="shutter" title="ถ่ายเก็บผลงาน (Space)" aria-label="ถ่ายรูป"></button>
+    <button class="icon-btn" id="mirrorBtn" title="กลับซ้าย-ขวา" aria-label="มิเรอร์">🪞</button>
   </div>
 
-  <!-- preview controls -->
   <div class="preview-actions" id="previewControls" style="display:none">
-    <button class="pill ghost" id="retakeBtn">↩︎ ถ่ายใหม่</button>
+    <button class="pill ghost" id="retakeBtn">↩︎ วาดต่อ</button>
     <button class="pill secondary" id="downloadBtn">⬇︎ ดาวน์โหลด</button>
     <button class="pill primary" id="shareBtn" style="display:none">📤 บันทึก / แชร์</button>
   </div>
-  <div class="hint" id="iosHint" style="display:none">เคล็ดลับ iPhone/iPad: กด “บันทึก / แชร์” แล้วเลือก “บันทึกรูปภาพ” เพื่อเก็บลงคลังภาพ</div>
+  <div class="hint" id="iosHint" style="display:none">iPhone/iPad: กด “บันทึก / แชร์” แล้วเลือก “บันทึกรูปภาพ” เพื่อเก็บลงคลังภาพ</div>
 
-<script>
-(() => {
-  "use strict";
+<script type="module">
+import { HandLandmarker, FilesetResolver }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10/vision_bundle.mjs";
 
-  const video   = document.getElementById("video");
-  const flash   = document.getElementById("flash");
-  const overlay = document.getElementById("overlay");
-  const spinner = document.getElementById("spinner");
-  const overlayMsg = document.getElementById("overlayMsg");
-  const retryBtn   = document.getElementById("retryBtn");
+const video   = document.getElementById("video");
+const display = document.getElementById("display");
+const dctx    = display.getContext("2d");
+const flash   = document.getElementById("flash");
+const statusEl= document.getElementById("status");
+const camNameEl = document.getElementById("camName");
+const overlay = document.getElementById("overlay");
+const spinner = document.getElementById("spinner");
+const overlayMsg = document.getElementById("overlayMsg");
+const retryBtn   = document.getElementById("retryBtn");
+const liveControls = document.getElementById("liveControls");
+const switchBtn  = document.getElementById("switchBtn");
+const mirrorBtn  = document.getElementById("mirrorBtn");
+const shutter    = document.getElementById("shutter");
+const toolbar    = document.getElementById("toolbar");
+const clearBtn   = document.getElementById("clearBtn");
+const preview    = document.getElementById("preview");
+const photo      = document.getElementById("photo");
+const previewControls = document.getElementById("previewControls");
+const retakeBtn  = document.getElementById("retakeBtn");
+const downloadBtn= document.getElementById("downloadBtn");
+const shareBtn   = document.getElementById("shareBtn");
+const iosHint    = document.getElementById("iosHint");
 
-  const liveControls = document.getElementById("liveControls");
-  const switchBtn    = document.getElementById("switchBtn");
-  const shutter      = document.getElementById("shutter");
+const strokeCanvas = document.createElement("canvas");
+const sctx = strokeCanvas.getContext("2d");
 
-  const preview         = document.getElementById("preview");
-  const photo           = document.getElementById("photo");
-  const previewControls = document.getElementById("previewControls");
-  const retakeBtn       = document.getElementById("retakeBtn");
-  const downloadBtn     = document.getElementById("downloadBtn");
-  const shareBtn        = document.getElementById("shareBtn");
-  const iosHint         = document.getElementById("iosHint");
+let stream = null;
+let facingMode = "environment";
+let videoDevices = [];
+let currentDeviceId = null;
+let triedCamo = false;            // auto-pick Camo only once at startup
+let mirrorOn = false;             // is the displayed image flipped L-R?
+let userMirrorOverride = null;    // null = auto (mirror only the front cam)
 
-  let stream = null;
-  let facingMode = "environment"; // เริ่มที่กล้องหลัง
-  let currentBlob = null;
-  let currentUrl = null;
-  let currentName = "";
+let handLandmarker = null;
+let modelReady = false;
+let running = false;
+let lastVideoTime = -1;
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+let W = 0, H = 0;
+let color = "#ffffff";
+let isEraser = false;
+let isPinching = false;
+let lastDraw = null;
+let curLandmarks = null;
+let pinchPt = null;
 
-  function tsName() {
-    const d = new Date(), p = n => String(n).padStart(2, "0");
-    return `photo-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`;
+let currentBlob = null, currentUrl = null, currentName = "";
+
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const CAMO_RE = /camo|reincubate/i;
+
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [9,10],[10,11],[11,12],
+  [13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function tsName() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `draw-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`;
+}
+function showOverlay(msg, { error = false, retry = false } = {}) {
+  overlay.classList.remove("hidden");
+  spinner.style.display = error ? "none" : "block";
+  overlayMsg.textContent = msg;
+  overlayMsg.classList.toggle("error", error);
+  retryBtn.style.display = retry ? "inline-block" : "none";
+}
+function hideOverlay() { overlay.classList.add("hidden"); }
+function setStatus(text, drawing = false) {
+  statusEl.textContent = text;
+  statusEl.classList.toggle("drawing", drawing);
+}
+function setCamName(name) {
+  if (!name) { camNameEl.style.display = "none"; return; }
+  camNameEl.textContent = (CAMO_RE.test(name) ? "🟢 " : "📷 ") + name;
+  camNameEl.style.display = "flex";
+}
+
+// ---- hand-detection model ----
+async function loadModel() {
+  setStatus("⏳ กำลังโหลดโมเดลตรวจจับมือ…");
+  try {
+    const fileset = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10/wasm"
+    );
+    handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        delegate: "GPU"
+      },
+      runningMode: "VIDEO",
+      numHands: 1
+    });
+    modelReady = true;
+    setStatus("✋ ยกมือขึ้นมาในกล้อง");
+  } catch (err) {
+    setStatus("⚠️ โหลดโมเดลไม่สำเร็จ (ตรวจเน็ต)");
+    console.error("model load failed:", err);
   }
+}
 
-  function showOverlay(msg, { error = false, retry = false } = {}) {
-    overlay.classList.remove("hidden");
-    spinner.style.display = error ? "none" : "block";
-    overlayMsg.textContent = msg;
-    overlayMsg.classList.toggle("error", error);
-    retryBtn.style.display = retry ? "inline-block" : "none";
-  }
-  function hideOverlay() { overlay.classList.add("hidden"); }
+// ---- camera ----
+function stopStream() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
 
-  function stopStream() {
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  }
+async function startCamera(deviceId) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return showOverlay("เบราว์เซอร์นี้ไม่รองรับการเข้าถึงกล้อง", { error: true });
+  if (!window.isSecureContext)
+    return showOverlay("กล้องทำงานเฉพาะบน HTTPS หรือ localhost เท่านั้น — เปิดผ่าน GitHub Pages (https://) หรือ http://localhost", { error: true, retry: true });
 
-  async function startCamera() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      return showOverlay("เบราว์เซอร์นี้ไม่รองรับการเข้าถึงกล้อง", { error: true });
+  showOverlay("กำลังเปิดกล้อง…");
+  stopStream();
+  try {
+    const videoConstraints = deviceId
+      ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      : { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } };
+    stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    await new Promise(res => {
+      if (video.readyState >= 2) return res();
+      video.onloadedmetadata = () => res();
+    });
+
+    const track = stream.getVideoTracks()[0];
+    const s = (track && track.getSettings) ? track.getSettings() : {};
+    currentDeviceId = s.deviceId || deviceId || null;
+    // auto-mirror only the user-facing (selfie) camera; Camo & rear cams: no mirror
+    const autoMirror = s.facingMode === "user";
+    mirrorOn = (userMirrorOverride === null) ? autoMirror : userMirrorOverride;
+
+    setupCanvases();
+    hideOverlay();
+    shutter.disabled = false;
+    await populateDevices();
+    setCamName(track ? track.label : "");
+
+    // first launch: if a Camo virtual camera exists, jump to it automatically
+    if (!deviceId && !triedCamo) {
+      triedCamo = true;
+      const camo = videoDevices.find(d => CAMO_RE.test(d.label));
+      if (camo && camo.deviceId && camo.deviceId !== currentDeviceId) return startCamera(camo.deviceId);
     }
-    if (!window.isSecureContext) {
-      return showOverlay(
-        "กล้องทำงานเฉพาะบน HTTPS หรือ localhost เท่านั้น — เปิดผ่าน GitHub Pages (https://) หรือ http://localhost จะใช้ได้",
-        { error: true, retry: true }
-      );
+
+    if (!running) { running = true; requestAnimationFrame(loop); }
+  } catch (err) {
+    handleCameraError(err, deviceId);
+  }
+}
+function handleCameraError(err, deviceId) {
+  const n = err && err.name;
+  let msg;
+  if (n === "NotAllowedError" || n === "SecurityError") msg = "ยังไม่ได้อนุญาตให้ใช้กล้อง — กดอนุญาตแล้วลองอีกครั้ง";
+  else if (n === "NotFoundError" || n === "DevicesNotFoundError") msg = "ไม่พบกล้องบนอุปกรณ์นี้";
+  else if (n === "NotReadableError" || n === "TrackStartError") msg = deviceId
+      ? "เปิดกล้องตัวนี้ไม่ได้ (Camo เชื่อมต่ออยู่ไหม?) — กดเพื่อใช้กล้องปกติ"
+      : "กล้องถูกแอปอื่นใช้งานอยู่ — ปิดแล้วลองใหม่";
+  else msg = "เปิดกล้องไม่สำเร็จ: " + (err && err.message ? err.message : err);
+  showOverlay(msg, { error: true, retry: true });
+}
+async function populateDevices() {
+  try {
+    videoDevices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    switchBtn.style.display = videoDevices.length > 1 ? "flex" : "none";
+  } catch { videoDevices = []; }
+}
+function setupCanvases() {
+  W = video.videoWidth; H = video.videoHeight;
+  display.width = W; display.height = H;
+  strokeCanvas.width = W; strokeCanvas.height = H;
+  sctx.clearRect(0, 0, W, H);   // changing camera resets the drawing
+  lastDraw = null;
+}
+
+const mirror = () => mirrorOn;
+function toDisp(p) { return { x: (mirror() ? (1 - p.x) : p.x) * W, y: p.y * H }; }
+function dist2(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+// ---- main loop ----
+function loop() {
+  if (!running) return;
+  if (modelReady && handLandmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const res = handLandmarker.detectForVideo(video, performance.now());
+    process(res);
+  }
+  composite();
+  requestAnimationFrame(loop);
+}
+
+function process(res) {
+  const hands = res && res.landmarks;
+  if (!hands || hands.length === 0) {
+    curLandmarks = null; pinchPt = null; isPinching = false; lastDraw = null;
+    if (modelReady) setStatus("✋ ยกมือขึ้นมาในกล้อง");
+    return;
+  }
+  const lm = hands[0];
+  curLandmarks = lm;
+
+  const pinchDist = dist2(lm[4], lm[8]);          // thumb tip ↔ index tip
+  const palm = dist2(lm[0], lm[9]) || 1;          // palm-length reference
+  const ratio = pinchDist / palm;
+  if (!isPinching && ratio < 0.35) isPinching = true;
+  else if (isPinching && ratio > 0.50) isPinching = false;
+
+  const mid = { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 };
+  pinchPt = toDisp(mid);
+
+  if (isPinching) {
+    setStatus(isEraser ? "🧽 กำลังลบ" : "✏️ กำลังวาด", true);
+    if (lastDraw) drawSegment(lastDraw, pinchPt);
+    lastDraw = pinchPt;
+  } else {
+    setStatus("👌 จีบนิ้วโป้ง+ชี้ เพื่อวาด");
+    lastDraw = null;
+  }
+}
+
+function drawSegment(a, b) {
+  sctx.lineCap = "round"; sctx.lineJoin = "round";
+  if (isEraser) {
+    sctx.globalCompositeOperation = "destination-out";
+    sctx.lineWidth = Math.max(20, W * 0.035);
+    sctx.strokeStyle = "rgba(0,0,0,1)";
+  } else {
+    sctx.globalCompositeOperation = "source-over";
+    sctx.lineWidth = Math.max(4, W * 0.007);
+    sctx.strokeStyle = color;
+  }
+  sctx.beginPath(); sctx.moveTo(a.x, a.y); sctx.lineTo(b.x, b.y); sctx.stroke();
+}
+
+function composite() {
+  if (!W) return;
+  dctx.save();
+  if (mirror()) { dctx.translate(W, 0); dctx.scale(-1, 1); }
+  dctx.drawImage(video, 0, 0, W, H);
+  dctx.restore();
+  dctx.drawImage(strokeCanvas, 0, 0);
+  if (curLandmarks) {
+    dctx.strokeStyle = "rgba(255,255,255,.55)";
+    dctx.lineWidth = Math.max(2, W * 0.004);
+    for (const [a, b] of CONNECTIONS) {
+      const pa = toDisp(curLandmarks[a]), pb = toDisp(curLandmarks[b]);
+      dctx.beginPath(); dctx.moveTo(pa.x, pa.y); dctx.lineTo(pb.x, pb.y); dctx.stroke();
     }
-
-    showOverlay("กำลังเปิดกล้อง…");
-    stopStream();
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: facingMode },
-          width:  { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
-      video.srcObject = stream;
-      video.classList.toggle("mirror", facingMode === "user");
-      await video.play().catch(() => {});
-      hideOverlay();
-      shutter.disabled = false;
-      await refreshCameraCount();
-    } catch (err) {
-      handleCameraError(err);
+    dctx.fillStyle = "rgba(79,140,255,.9)";
+    for (const p of curLandmarks) {
+      const d = toDisp(p);
+      dctx.beginPath(); dctx.arc(d.x, d.y, Math.max(2, W * 0.005), 0, 7); dctx.fill();
+    }
+    if (pinchPt) {
+      const r = Math.max(8, W * 0.018);
+      dctx.beginPath(); dctx.arc(pinchPt.x, pinchPt.y, r, 0, 7);
+      dctx.fillStyle = isPinching ? (isEraser ? "rgba(255,255,255,.5)" : color) : "rgba(255,255,255,.25)";
+      dctx.fill();
+      dctx.lineWidth = Math.max(2, W * 0.004); dctx.strokeStyle = "#fff"; dctx.stroke();
     }
   }
+}
 
-  function handleCameraError(err) {
-    let msg;
-    const name = err && err.name;
-    if (name === "NotAllowedError" || name === "SecurityError")
-      msg = "ยังไม่ได้อนุญาตให้ใช้กล้อง — กดอนุญาตในเบราว์เซอร์ แล้วลองอีกครั้ง";
-    else if (name === "NotFoundError" || name === "DevicesNotFoundError")
-      msg = "ไม่พบกล้องบนอุปกรณ์นี้";
-    else if (name === "NotReadableError" || name === "TrackStartError")
-      msg = "กล้องถูกแอปอื่นใช้งานอยู่ — ปิดแอปนั้นแล้วลองใหม่";
-    else
-      msg = "เปิดกล้องไม่สำเร็จ: " + (err && err.message ? err.message : err);
-    showOverlay(msg, { error: true, retry: true });
-  }
+// ---- capture (video + drawing, no skeleton) ----
+function capture() {
+  if (!W) return;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const ctx = c.getContext("2d");
+  ctx.save();
+  if (mirror()) { ctx.translate(W, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(video, 0, 0, W, H);
+  ctx.restore();
+  ctx.drawImage(strokeCanvas, 0, 0);
 
-  async function refreshCameraCount() {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter(d => d.kind === "videoinput");
-      switchBtn.style.display = cams.length > 1 ? "flex" : "none";
-    } catch { /* เงียบไว้ */ }
-  }
+  flash.classList.remove("fire"); void flash.offsetWidth; flash.classList.add("fire");
 
-  function capturePhoto() {
-    if (!video.videoWidth) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    // กล้องหน้า: พลิกภาพให้ตรงกับที่เห็นบนจอ
-    if (facingMode === "user") { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  c.toBlob((blob) => {
+    if (!blob) return;
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+    currentBlob = blob; currentName = tsName(); currentUrl = URL.createObjectURL(blob);
+    photo.src = currentUrl;
+    let canShareFile = false;
+    try { canShareFile = !!(navigator.canShare && navigator.canShare({ files: [new File([blob], currentName, { type: "image/jpeg" })] })); } catch {}
+    shareBtn.style.display = canShareFile ? "inline-flex" : "none";
+    iosHint.style.display = (isIOS && canShareFile) ? "block" : "none";
+    running = false;
+    preview.classList.add("show");
+    liveControls.style.display = "none";
+    previewControls.style.display = "flex";
+  }, "image/jpeg", 0.95);
+}
+function retake() {
+  preview.classList.remove("show");
+  previewControls.style.display = "none";
+  iosHint.style.display = "none";
+  liveControls.style.display = "flex";
+  if (!running) { running = true; lastVideoTime = -1; requestAnimationFrame(loop); }
+}
+function download() {
+  if (!currentUrl) return;
+  const a = document.createElement("a");
+  a.href = currentUrl; a.download = currentName;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function share() {
+  if (!currentBlob) return;
+  try { await navigator.share({ files: [new File([currentBlob], currentName, { type: "image/jpeg" })], title: "DrawInMiddleAir" }); }
+  catch {}
+}
 
-    flash.classList.remove("fire"); void flash.offsetWidth; flash.classList.add("fire");
+// ---- events ----
+shutter.addEventListener("click", capture);
+retakeBtn.addEventListener("click", retake);
+downloadBtn.addEventListener("click", download);
+shareBtn.addEventListener("click", share);
+retryBtn.addEventListener("click", () => startCamera());
+clearBtn.addEventListener("click", () => { if (W) sctx.clearRect(0, 0, W, H); lastDraw = null; });
 
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      if (currentUrl) URL.revokeObjectURL(currentUrl);
-      currentBlob = blob;
-      currentName = tsName();
-      currentUrl = URL.createObjectURL(blob);
-      photo.src = currentUrl;
-
-      // เปิดปุ่มแชร์เฉพาะอุปกรณ์ที่รองรับการแชร์ไฟล์ (iOS/Android ส่วนใหญ่)
-      let canShareFile = false;
-      try {
-        const f = new File([blob], currentName, { type: "image/jpeg" });
-        canShareFile = !!(navigator.canShare && navigator.canShare({ files: [f] }));
-      } catch { canShareFile = false; }
-      shareBtn.style.display = canShareFile ? "inline-flex" : "none";
-      iosHint.style.display = (isIOS && canShareFile) ? "block" : "none";
-
-      preview.classList.add("show");
-      liveControls.style.display = "none";
-      previewControls.style.display = "flex";
-    }, "image/jpeg", 0.95);
-  }
-
-  function retake() {
-    preview.classList.remove("show");
-    previewControls.style.display = "none";
-    iosHint.style.display = "none";
-    liveControls.style.display = "flex";
-  }
-
-  function download() {
-    if (!currentUrl) return;
-    const a = document.createElement("a");
-    a.href = currentUrl;
-    a.download = currentName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-
-  async function share() {
-    if (!currentBlob) return;
-    try {
-      const file = new File([currentBlob], currentName, { type: "image/jpeg" });
-      await navigator.share({ files: [file], title: "รูปถ่าย" });
-    } catch (e) {
-      // ผู้ใช้กดยกเลิก — ไม่ต้องทำอะไร
-    }
-  }
-
-  // ---- events ----
-  shutter.addEventListener("click", capturePhoto);
-  retakeBtn.addEventListener("click", retake);
-  downloadBtn.addEventListener("click", download);
-  shareBtn.addEventListener("click", share);
-  retryBtn.addEventListener("click", startCamera);
-  switchBtn.addEventListener("click", () => {
+switchBtn.addEventListener("click", () => {
+  userMirrorOverride = null;            // back to auto when changing device
+  if (videoDevices.length > 1 && currentDeviceId) {
+    const i = videoDevices.findIndex(d => d.deviceId === currentDeviceId);
+    const next = videoDevices[(i + 1) % videoDevices.length];
+    startCamera(next.deviceId);
+  } else {
     facingMode = (facingMode === "environment") ? "user" : "environment";
     startCamera();
-  });
+  }
+});
+mirrorBtn.addEventListener("click", () => {
+  mirrorOn = !mirrorOn;
+  userMirrorOverride = mirrorOn;
+  mirrorBtn.classList.toggle("on", mirrorOn);
+});
 
-  // Space = ถ่าย (เดสก์ท็อป)
-  document.addEventListener("keydown", (e) => {
-    if (e.code === "Space" && !preview.classList.contains("show")) {
-      e.preventDefault(); capturePhoto();
-    }
+toolbar.querySelectorAll(".swatch[data-color]").forEach(sw => {
+  sw.addEventListener("click", () => {
+    toolbar.querySelectorAll(".swatch").forEach(s => s.classList.remove("active"));
+    sw.classList.add("active");
+    const v = sw.getAttribute("data-color");
+    isEraser = (v === "eraser");
+    if (!isEraser) color = v;
   });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && !preview.classList.contains("show")) { e.preventDefault(); capture(); }
+  if (e.key === "c" && W) { sctx.clearRect(0, 0, W, H); lastDraw = null; }
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !stream && !preview.classList.contains("show")) startCamera();
+});
 
-  // กล้องหยุดเองตอนสลับแท็บบนบางเครื่อง — เปิดใหม่เมื่อกลับมา
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && !stream && !preview.classList.contains("show")) startCamera();
-  });
-
-  shutter.disabled = true;
-  startCamera();
-})();
+// ---- go ----
+shutter.disabled = true;
+loadModel();
+startCamera();
 </script>
 </body>
 </html>
