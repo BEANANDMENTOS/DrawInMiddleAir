@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#0b0d12" />
+<title>กล้องเว็บ — ถ่าย & บันทึก</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: rgba(20, 24, 33, 0.72);
+    --accent: #4f8cff;
+    --text: #f5f7fa;
+    --muted: #9aa3b2;
+    --danger: #ff5d5d;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  header {
+    flex: 0 0 auto;
+    padding: 14px 18px;
+    padding-top: max(14px, env(safe-area-inset-top));
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: .2px;
+  }
+  header .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+
+  /* ---- Camera stage ---- */
+  #stage {
+    flex: 1 1 auto;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    overflow: hidden;
+  }
+  #video, #photo {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  #video.mirror { transform: scaleX(-1); }
+
+  /* capture flash */
+  #flash {
+    position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none;
+  }
+  #flash.fire { animation: flash .35s ease-out; }
+  @keyframes flash { 0% { opacity: .9; } 100% { opacity: 0; } }
+
+  /* ---- Overlays (loading / error) ---- */
+  #overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; text-align: center; padding: 24px;
+    background: rgba(5, 7, 11, .9);
+  }
+  #overlay.hidden { display: none; }
+  .spinner {
+    width: 42px; height: 42px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.18); border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #overlayMsg { color: var(--muted); max-width: 460px; line-height: 1.6; font-size: 15px; }
+  #overlayMsg.error { color: var(--danger); }
+
+  /* ---- Preview (after capture) ---- */
+  #preview {
+    position: absolute; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: #000;
+  }
+  #preview.show { display: flex; }
+
+  /* ---- Buttons ---- */
+  button {
+    font-family: inherit; cursor: pointer; border: none; color: var(--text);
+    transition: transform .08s ease, background .15s ease, opacity .15s ease;
+  }
+  button:active { transform: scale(.94); }
+
+  .controls {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    gap: 16px;
+  }
+  .icon-btn {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--panel); backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+  }
+  .icon-btn:disabled { opacity: .35; cursor: default; }
+
+  /* shutter */
+  #shutter {
+    width: 76px; height: 76px; border-radius: 50%;
+    background: #fff; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 0 7px #fff;
+  }
+  #shutter::after {
+    content: ""; width: 60px; height: 60px; border-radius: 50%;
+    background: #fff; border: 2px solid #0b0d12;
+  }
+  #shutter:disabled { opacity: .4; cursor: default; }
+
+  .spacer { width: 56px; height: 56px; }
+
+  /* preview action bar */
+  .preview-actions {
+    display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+    padding: 18px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+  .pill {
+    padding: 14px 22px; border-radius: 999px; font-size: 16px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .pill.primary { background: var(--accent); }
+  .pill.secondary { background: var(--panel); }
+  .pill.ghost { background: transparent; border: 1.5px solid rgba(255,255,255,.25); }
+
+  .retry-btn {
+    background: var(--accent); padding: 12px 24px; border-radius: 999px;
+    font-size: 16px; font-weight: 600;
+  }
+
+  .hint { font-size: 12.5px; color: var(--muted); text-align: center; padding: 0 18px 10px; }
+</style>
+</head>
+<body>
+  <header><span class="dot"></span> กล้องเว็บ — ถ่าย &amp; บันทึก</header>
+
+  <div id="stage">
+    <video id="video" autoplay muted playsinline></video>
+    <div id="flash"></div>
+
+    <!-- loading / error overlay -->
+    <div id="overlay">
+      <div class="spinner" id="spinner"></div>
+      <div id="overlayMsg">กำลังเปิดกล้อง…</div>
+      <button class="retry-btn" id="retryBtn" style="display:none">เปิดกล้อง</button>
+    </div>
+
+    <!-- captured photo preview -->
+    <div id="preview">
+      <img id="photo" alt="รูปที่ถ่าย" />
+    </div>
+  </div>
+
+  <!-- live controls -->
+  <div class="controls" id="liveControls">
+    <button class="icon-btn" id="switchBtn" title="สลับกล้อง" aria-label="สลับกล้อง">🔄</button>
+    <button id="shutter" title="ถ่ายรูป (Space)" aria-label="ถ่ายรูป"></button>
+    <div class="spacer"></div>
+  </div>
+
+  <!-- preview controls -->
+  <div class="preview-actions" id="previewControls" style="display:none">
+    <button class="pill ghost" id="retakeBtn">↩︎ ถ่ายใหม่</button>
+    <button class="pill secondary" id="downloadBtn">⬇︎ ดาวน์โหลด</button>
+    <button class="pill primary" id="shareBtn" style="display:none">📤 บันทึก / แชร์</button>
+  </div>
+  <div class="hint" id="iosHint" style="display:none">เคล็ดลับ iPhone/iPad: กด “บันทึก / แชร์” แล้วเลือก “บันทึกรูปภาพ” เพื่อเก็บลงคลังภาพ</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const video   = document.getElementById("video");
+  const flash   = document.getElementById("flash");
+  const overlay = document.getElementById("overlay");
+  const spinner = document.getElementById("spinner");
+  const overlayMsg = document.getElementById("overlayMsg");
+  const retryBtn   = document.getElementById("retryBtn");
+
+  const liveControls = document.getElementById("liveControls");
+  const switchBtn    = document.getElementById("switchBtn");
+  const shutter      = document.getElementById("shutter");
+
+  const preview         = document.getElementById("preview");
+  const photo           = document.getElementById("photo");
+  const previewControls = document.getElementById("previewControls");
+  const retakeBtn       = document.getElementById("retakeBtn");
+  const downloadBtn     = document.getElementById("downloadBtn");
+  const shareBtn        = document.getElementById("shareBtn");
+  const iosHint         = document.getElementById("iosHint");
+
+  let stream = null;
+  let facingMode = "environment"; // เริ่มที่กล้องหลัง
+  let currentBlob = null;
+  let currentUrl = null;
+  let currentName = "";
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  function tsName() {
+    const d = new Date(), p = n => String(n).padStart(2, "0");
+    return `photo-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`;
+  }
+
+  function showOverlay(msg, { error = false, retry = false } = {}) {
+    overlay.classList.remove("hidden");
+    spinner.style.display = error ? "none" : "block";
+    overlayMsg.textContent = msg;
+    overlayMsg.classList.toggle("error", error);
+    retryBtn.style.display = retry ? "inline-block" : "none";
+  }
+  function hideOverlay() { overlay.classList.add("hidden"); }
+
+  function stopStream() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  }
+
+  async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return showOverlay("เบราว์เซอร์นี้ไม่รองรับการเข้าถึงกล้อง", { error: true });
+    }
+    if (!window.isSecureContext) {
+      return showOverlay(
+        "กล้องทำงานเฉพาะบน HTTPS หรือ localhost เท่านั้น — เปิดผ่าน GitHub Pages (https://) หรือ http://localhost จะใช้ได้",
+        { error: true, retry: true }
+      );
+    }
+
+    showOverlay("กำลังเปิดกล้อง…");
+    stopStream();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: facingMode },
+          width:  { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+        audio: false
+      });
+      video.srcObject = stream;
+      video.classList.toggle("mirror", facingMode === "user");
+      await video.play().catch(() => {});
+      hideOverlay();
+      shutter.disabled = false;
+      await refreshCameraCount();
+    } catch (err) {
+      handleCameraError(err);
+    }
+  }
+
+  function handleCameraError(err) {
+    let msg;
+    const name = err && err.name;
+    if (name === "NotAllowedError" || name === "SecurityError")
+      msg = "ยังไม่ได้อนุญาตให้ใช้กล้อง — กดอนุญาตในเบราว์เซอร์ แล้วลองอีกครั้ง";
+    else if (name === "NotFoundError" || name === "DevicesNotFoundError")
+      msg = "ไม่พบกล้องบนอุปกรณ์นี้";
+    else if (name === "NotReadableError" || name === "TrackStartError")
+      msg = "กล้องถูกแอปอื่นใช้งานอยู่ — ปิดแอปนั้นแล้วลองใหม่";
+    else
+      msg = "เปิดกล้องไม่สำเร็จ: " + (err && err.message ? err.message : err);
+    showOverlay(msg, { error: true, retry: true });
+  }
+
+  async function refreshCameraCount() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === "videoinput");
+      switchBtn.style.display = cams.length > 1 ? "flex" : "none";
+    } catch { /* เงียบไว้ */ }
+  }
+
+  function capturePhoto() {
+    if (!video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    // กล้องหน้า: พลิกภาพให้ตรงกับที่เห็นบนจอ
+    if (facingMode === "user") { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    flash.classList.remove("fire"); void flash.offsetWidth; flash.classList.add("fire");
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      currentBlob = blob;
+      currentName = tsName();
+      currentUrl = URL.createObjectURL(blob);
+      photo.src = currentUrl;
+
+      // เปิดปุ่มแชร์เฉพาะอุปกรณ์ที่รองรับการแชร์ไฟล์ (iOS/Android ส่วนใหญ่)
+      let canShareFile = false;
+      try {
+        const f = new File([blob], currentName, { type: "image/jpeg" });
+        canShareFile = !!(navigator.canShare && navigator.canShare({ files: [f] }));
+      } catch { canShareFile = false; }
+      shareBtn.style.display = canShareFile ? "inline-flex" : "none";
+      iosHint.style.display = (isIOS && canShareFile) ? "block" : "none";
+
+      preview.classList.add("show");
+      liveControls.style.display = "none";
+      previewControls.style.display = "flex";
+    }, "image/jpeg", 0.95);
+  }
+
+  function retake() {
+    preview.classList.remove("show");
+    previewControls.style.display = "none";
+    iosHint.style.display = "none";
+    liveControls.style.display = "flex";
+  }
+
+  function download() {
+    if (!currentUrl) return;
+    const a = document.createElement("a");
+    a.href = currentUrl;
+    a.download = currentName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function share() {
+    if (!currentBlob) return;
+    try {
+      const file = new File([currentBlob], currentName, { type: "image/jpeg" });
+      await navigator.share({ files: [file], title: "รูปถ่าย" });
+    } catch (e) {
+      // ผู้ใช้กดยกเลิก — ไม่ต้องทำอะไร
+    }
+  }
+
+  // ---- events ----
+  shutter.addEventListener("click", capturePhoto);
+  retakeBtn.addEventListener("click", retake);
+  downloadBtn.addEventListener("click", download);
+  shareBtn.addEventListener("click", share);
+  retryBtn.addEventListener("click", startCamera);
+  switchBtn.addEventListener("click", () => {
+    facingMode = (facingMode === "environment") ? "user" : "environment";
+    startCamera();
+  });
+
+  // Space = ถ่าย (เดสก์ท็อป)
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && !preview.classList.contains("show")) {
+      e.preventDefault(); capturePhoto();
+    }
+  });
+
+  // กล้องหยุดเองตอนสลับแท็บบนบางเครื่อง — เปิดใหม่เมื่อกลับมา
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !stream && !preview.classList.contains("show")) startCamera();
+  });
+
+  shutter.disabled = true;
+  startCamera();
+})();
+</script>
+</body>
+</html>
