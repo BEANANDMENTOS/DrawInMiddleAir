@@ -104,6 +104,18 @@
   }
   .swatch:active { transform: scale(.9); }
   .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.4); }
+  .size-control {
+    flex: 0 0 128px; height: 30px; padding: 0 10px; border-radius: 999px;
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,.12);
+  }
+  .size-dot {
+    flex: 0 0 18px; width: 10px; height: 10px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+  }
+  #sizeRange {
+    width: 82px; accent-color: var(--accent);
+  }
   #clearBtn, #voiceBtn { background: rgba(255,255,255,.12); color: var(--text); }
   #voiceBtn.listening { background: var(--good); box-shadow: 0 0 0 3px rgba(52,199,89,.25); }
   #voiceBtn.unsupported { opacity: .4; cursor: not-allowed; }
@@ -153,6 +165,8 @@
   @media (max-width: 360px) {
     #toolbar { gap: 8px; padding: 7px 10px; }
     .swatch { flex-basis: 28px; width: 28px; height: 28px; font-size: 14px; }
+    .size-control { flex-basis: 112px; height: 28px; }
+    #sizeRange { width: 68px; }
   }
 </style>
 </head>
@@ -174,6 +188,10 @@
       <div class="swatch" data-color="#34c759" style="background:#34c759"></div>
       <div class="swatch" data-color="#0a84ff" style="background:#0a84ff"></div>
       <div class="swatch" data-color="eraser" title="ยางลบ">🧽</div>
+      <label class="size-control" title="ปรับขนาดเส้น">
+        <span class="size-dot" id="sizeDot"></span>
+        <input id="sizeRange" type="range" min="4" max="44" value="12" step="1" aria-label="ปรับขนาดเส้น" />
+      </label>
       <button class="swatch" id="undoBtn" title="ย้อนกลับ" aria-label="ย้อนกลับ">↩️</button>
       <button class="swatch" id="clearBtn" title="ล้างทั้งหมด">🗑️</button>
       <button class="swatch" id="voiceBtn" title="ฟังคำสั่งสี" aria-label="ฟังคำสั่งสี">🎙️</button>
@@ -220,6 +238,8 @@ const switchBtn  = document.getElementById("switchBtn");
 const mirrorBtn  = document.getElementById("mirrorBtn");
 const shutter    = document.getElementById("shutter");
 const toolbar    = document.getElementById("toolbar");
+const sizeRange  = document.getElementById("sizeRange");
+const sizeDot    = document.getElementById("sizeDot");
 const undoBtn    = document.getElementById("undoBtn");
 const clearBtn   = document.getElementById("clearBtn");
 const voiceBtn   = document.getElementById("voiceBtn");
@@ -249,6 +269,7 @@ let lastVideoTime = -1;
 
 let W = 0, H = 0;
 let color = "#ffffff";
+let brushSize = Number(sizeRange.value);
 let isEraser = false;
 let isPinching = false;
 let lastDraw = null;
@@ -337,6 +358,26 @@ function selectTool(value) {
   if (swatch) swatch.classList.add("active");
   isEraser = value === "eraser";
   if (!isEraser) color = value;
+  updateSizePreview();
+}
+function lineWidthForBrush() {
+  return Math.max(2, brushSize * ((W || 1280) / 1280));
+}
+function lineWidthForEraser() {
+  return Math.max(12, lineWidthForBrush() * 3);
+}
+function setBrushSize(value, { announce = false } = {}) {
+  const next = Math.max(4, Math.min(44, Math.round(Number(value) || brushSize)));
+  brushSize = next;
+  sizeRange.value = String(next);
+  updateSizePreview();
+  if (announce) flashStatus(`🖌️ ขนาดเส้น ${next}`);
+}
+function updateSizePreview() {
+  const dotSize = Math.max(7, Math.min(22, brushSize * 0.5));
+  sizeDot.style.width = `${dotSize}px`;
+  sizeDot.style.height = `${dotSize}px`;
+  sizeDot.style.background = isEraser ? "rgba(255,255,255,.55)" : color;
 }
 function normalizeSpeech(text) {
   return text.toLowerCase().replace(/\s+/g, "");
@@ -362,6 +403,19 @@ function handleVoiceCommand(rawText) {
   if (["ปากกา", "วาด", "pen", "draw"].some(word => text.includes(word))) {
     selectTool(color);
     flashStatus("✏️ กลับเป็นปากกา");
+    return;
+  }
+  if (["เส้นใหญ่", "ใหญ่ขึ้น", "หนาขึ้น", "bigger", "larger", "thicker"].some(word => text.includes(word))) {
+    setBrushSize(brushSize + 6, { announce: true });
+    return;
+  }
+  if (["เส้นเล็ก", "เล็กลง", "บางลง", "smaller", "thinner"].some(word => text.includes(word))) {
+    setBrushSize(brushSize - 6, { announce: true });
+    return;
+  }
+  const spokenSize = text.match(/(?:ขนาด|size)(\d{1,2})/) || text.match(/(?:เส้น|line)(\d{1,2})/);
+  if (spokenSize) {
+    setBrushSize(spokenSize[1], { announce: true });
     return;
   }
 
@@ -583,11 +637,11 @@ function drawSegment(a, b) {
   sctx.lineCap = "round"; sctx.lineJoin = "round";
   if (isEraser) {
     sctx.globalCompositeOperation = "destination-out";
-    sctx.lineWidth = Math.max(20, W * 0.035);
+    sctx.lineWidth = lineWidthForEraser();
     sctx.strokeStyle = "rgba(0,0,0,1)";
   } else {
     sctx.globalCompositeOperation = "source-over";
-    sctx.lineWidth = Math.max(4, W * 0.007);
+    sctx.lineWidth = lineWidthForBrush();
     sctx.strokeStyle = color;
   }
   sctx.beginPath(); sctx.moveTo(a.x, a.y); sctx.lineTo(b.x, b.y); sctx.stroke();
@@ -679,6 +733,8 @@ retryBtn.addEventListener("click", () => startCamera());
 undoBtn.addEventListener("click", undoDrawing);
 clearBtn.addEventListener("click", clearDrawing);
 voiceBtn.addEventListener("click", toggleVoice);
+sizeRange.addEventListener("input", () => setBrushSize(sizeRange.value));
+sizeRange.addEventListener("change", () => setBrushSize(sizeRange.value, { announce: true }));
 
 switchBtn.addEventListener("click", () => {
   userMirrorOverride = null;            // back to auto when changing device
@@ -713,6 +769,7 @@ document.addEventListener("visibilitychange", () => {
 
 // ---- go ----
 shutter.disabled = true;
+updateSizePreview();
 setupVoiceRecognition();
 loadModel();
 startCamera();
