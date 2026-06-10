@@ -282,6 +282,7 @@ let statusHoldUntil = 0;
 let voiceRecognition = null;
 let voiceListening = false;
 let voiceActive = false;
+let micPermissionGranted = false;
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -471,16 +472,41 @@ function setupVoiceRecognition() {
     }
   };
 }
-function toggleVoice() {
+async function requestMicrophoneAccess() {
+  if (micPermissionGranted) return true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
+  try {
+    flashStatus("🎙️ กำลังขอสิทธิ์ไมค์");
+    const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audioStream.getTracks().forEach(track => track.stop());
+    micPermissionGranted = true;
+    return true;
+  } catch (err) {
+    voiceListening = false;
+    voiceBtn.classList.remove("listening");
+    const name = err && err.name;
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      flashStatus("🎙️ เปิดสิทธิ์ไมค์ให้ Safari ก่อน");
+    } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      flashStatus("🎙️ ไม่พบไมค์บนอุปกรณ์นี้");
+    } else {
+      flashStatus("🎙️ ขอสิทธิ์ไมค์ไม่สำเร็จ");
+    }
+    return false;
+  }
+}
+async function toggleVoice() {
   if (!voiceRecognition) {
-    flashStatus("🎙️ เบราว์เซอร์นี้ยังไม่รองรับ");
+    flashStatus(isIOS ? "🎙️ เปิดใน Safari ปกติ แล้วเปิด Dictation" : "🎙️ เบราว์เซอร์นี้ยังไม่รองรับ");
     return;
   }
   voiceListening = !voiceListening;
   voiceBtn.classList.toggle("listening", voiceListening);
   if (voiceListening) {
+    const hasMic = await requestMicrophoneAccess();
+    if (!hasMic) return;
     try { if (!voiceActive) voiceRecognition.start(); }
-    catch { flashStatus("🎙️ เปิดไมค์ไม่ได้"); }
+    catch { flashStatus("🎙️ เปิดไมค์ไม่ได้ ลองกดไมค์อีกครั้ง"); }
   } else {
     flashStatus("🎙️ หยุดฟังแล้ว");
     try { if (voiceActive) voiceRecognition.stop(); }
