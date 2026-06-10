@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="theme-color" content="#0b0d12" />
-<title>DrawInMiddleAir — จีบนิ้ววาดกลางอากาศ</title>
+<title>DrawInMiddleAir — จีบยังไงก็ไม่ได้เธอกลับมา</title>
 <style>
   :root {
     --bg: #0b0d12;
@@ -92,17 +92,21 @@
   #toolbar {
     position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
     z-index: 4; display: flex; align-items: center; gap: 10px;
+    max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none;
     padding: 8px 12px; border-radius: 999px;
     background: var(--panel); backdrop-filter: blur(8px);
   }
+  #toolbar::-webkit-scrollbar { display: none; }
   .swatch {
-    width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+    flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
     border: 2.5px solid transparent; transition: transform .08s;
     display: flex; align-items: center; justify-content: center; font-size: 15px;
   }
   .swatch:active { transform: scale(.9); }
   .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.4); }
-  #clearBtn { background: rgba(255,255,255,.12); color: var(--text); }
+  #clearBtn, #voiceBtn { background: rgba(255,255,255,.12); color: var(--text); }
+  #voiceBtn.listening { background: var(--good); box-shadow: 0 0 0 3px rgba(52,199,89,.25); }
+  #voiceBtn.unsupported { opacity: .4; cursor: not-allowed; }
 
   #overlay {
     position: absolute; inset: 0; z-index: 6;
@@ -145,10 +149,15 @@
   .pill.ghost { background: transparent; border: 1.5px solid rgba(255,255,255,.25); }
   .retry-btn { background: var(--accent); padding: 12px 24px; border-radius: 999px; font-size: 16px; font-weight: 600; }
   .hint { font-size: 12.5px; color: var(--muted); text-align: center; padding: 0 18px 10px; }
+
+  @media (max-width: 360px) {
+    #toolbar { gap: 8px; padding: 7px 10px; }
+    .swatch { flex-basis: 28px; width: 28px; height: 28px; font-size: 14px; }
+  }
 </style>
 </head>
 <body>
-  <header><span class="dot"></span> DrawInMiddleAir — จีบนิ้ววาดกลางอากาศ ✍️</header>
+  <header><span class="dot"></span> DrawInMiddleAir — จีบยังไงก็ไม่ได้เธอกลับมา ✍️</header>
 
   <div id="stage">
     <video id="video" autoplay muted playsinline></video>
@@ -165,7 +174,9 @@
       <div class="swatch" data-color="#34c759" style="background:#34c759"></div>
       <div class="swatch" data-color="#0a84ff" style="background:#0a84ff"></div>
       <div class="swatch" data-color="eraser" title="ยางลบ">🧽</div>
+      <button class="swatch" id="undoBtn" title="ย้อนกลับ" aria-label="ย้อนกลับ">↩️</button>
       <button class="swatch" id="clearBtn" title="ล้างทั้งหมด">🗑️</button>
+      <button class="swatch" id="voiceBtn" title="ฟังคำสั่งสี" aria-label="ฟังคำสั่งสี">🎙️</button>
     </div>
 
     <div id="overlay">
@@ -209,7 +220,9 @@ const switchBtn  = document.getElementById("switchBtn");
 const mirrorBtn  = document.getElementById("mirrorBtn");
 const shutter    = document.getElementById("shutter");
 const toolbar    = document.getElementById("toolbar");
+const undoBtn    = document.getElementById("undoBtn");
 const clearBtn   = document.getElementById("clearBtn");
+const voiceBtn   = document.getElementById("voiceBtn");
 const preview    = document.getElementById("preview");
 const photo      = document.getElementById("photo");
 const previewControls = document.getElementById("previewControls");
@@ -241,12 +254,26 @@ let isPinching = false;
 let lastDraw = null;
 let curLandmarks = null;
 let pinchPt = null;
+let undoStack = [];
 
 let currentBlob = null, currentUrl = null, currentName = "";
+let statusHoldUntil = 0;
+let voiceRecognition = null;
+let voiceListening = false;
+let voiceActive = false;
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const CAMO_RE = /camo|reincubate/i;
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+const VOICE_COLORS = [
+  { value: "#ffffff", label: "สีขาว", words: ["ขาว", "สีขาว", "white"] },
+  { value: "#ff3b30", label: "สีแดง", words: ["แดง", "สีแดง", "red"] },
+  { value: "#ffd60a", label: "สีเหลือง", words: ["เหลือง", "สีเหลือง", "yellow"] },
+  { value: "#34c759", label: "สีเขียว", words: ["เขียว", "สีเขียว", "green"] },
+  { value: "#0a84ff", label: "สีฟ้า", words: ["ฟ้า", "สีฟ้า", "น้ำเงิน", "สีน้ำเงิน", "blue"] }
+];
 
 const CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],
@@ -269,14 +296,142 @@ function showOverlay(msg, { error = false, retry = false } = {}) {
   retryBtn.style.display = retry ? "inline-block" : "none";
 }
 function hideOverlay() { overlay.classList.add("hidden"); }
-function setStatus(text, drawing = false) {
+function setStatus(text, drawing = false, { force = false } = {}) {
+  if (!force && performance.now() < statusHoldUntil) return;
   statusEl.textContent = text;
   statusEl.classList.toggle("drawing", drawing);
+}
+function flashStatus(text, drawing = false) {
+  statusHoldUntil = performance.now() + 1700;
+  setStatus(text, drawing, { force: true });
 }
 function setCamName(name) {
   if (!name) { camNameEl.style.display = "none"; return; }
   camNameEl.textContent = (CAMO_RE.test(name) ? "🟢 " : "📷 ") + name;
   camNameEl.style.display = "flex";
+}
+function clearDrawing() {
+  pushUndoState();
+  if (W) sctx.clearRect(0, 0, W, H);
+  lastDraw = null;
+}
+function pushUndoState() {
+  if (!W || !H) return;
+  undoStack.push(sctx.getImageData(0, 0, W, H));
+  if (undoStack.length > 16) undoStack.shift();
+}
+function undoDrawing() {
+  const previous = undoStack.pop();
+  if (!previous) {
+    flashStatus("↩️ ไม่มีอะไรให้ย้อนกลับ");
+    return;
+  }
+  sctx.putImageData(previous, 0, 0);
+  lastDraw = null;
+  flashStatus("↩️ ย้อนกลับแล้ว");
+}
+function selectTool(value) {
+  toolbar.querySelectorAll(".swatch[data-color]").forEach(s => s.classList.remove("active"));
+  const swatch = Array.from(toolbar.querySelectorAll(".swatch[data-color]"))
+    .find(s => s.getAttribute("data-color") === value);
+  if (swatch) swatch.classList.add("active");
+  isEraser = value === "eraser";
+  if (!isEraser) color = value;
+}
+function normalizeSpeech(text) {
+  return text.toLowerCase().replace(/\s+/g, "");
+}
+function handleVoiceCommand(rawText) {
+  const text = normalizeSpeech(rawText);
+  if (!text) return;
+
+  if (["ย้อนกลับ", "เลิกทำ", "คืนค่า", "undo", "goback", "back"].some(word => text.includes(word))) {
+    undoDrawing();
+    return;
+  }
+  if (["ล้าง", "เคลียร์", "ลบทั้งหมด", "clear", "clearall", "deleteall"].some(word => text.includes(word))) {
+    clearDrawing();
+    flashStatus("🗑️ ล้างทั้งหมดแล้ว");
+    return;
+  }
+  if (["ยางลบ", "ลบ", "eraser", "erase"].some(word => text.includes(word))) {
+    selectTool("eraser");
+    flashStatus("🧽 เปลี่ยนเป็นยางลบ");
+    return;
+  }
+  if (["ปากกา", "วาด", "pen", "draw"].some(word => text.includes(word))) {
+    selectTool(color);
+    flashStatus("✏️ กลับเป็นปากกา");
+    return;
+  }
+
+  const picked = VOICE_COLORS.find(item => item.words.some(word => text.includes(word)));
+  if (picked) {
+    selectTool(picked.value);
+    flashStatus(`🎨 เปลี่ยนเป็น${picked.label}`);
+    return;
+  }
+
+  flashStatus(`🎙️ ได้ยิน: ${rawText}`);
+}
+function setupVoiceRecognition() {
+  if (!SpeechRecognition) {
+    voiceBtn.classList.add("unsupported");
+    voiceBtn.title = "เบราว์เซอร์นี้ยังไม่รองรับคำสั่งเสียง";
+    voiceBtn.disabled = true;
+    return;
+  }
+  voiceRecognition = new SpeechRecognition();
+  voiceRecognition.lang = "th-TH";
+  voiceRecognition.continuous = true;
+  voiceRecognition.interimResults = false;
+  voiceRecognition.maxAlternatives = 3;
+  voiceRecognition.onstart = () => {
+    voiceActive = true;
+    voiceBtn.classList.add("listening");
+    flashStatus("🎙️ กำลังฟังคำสั่งสี");
+  };
+  voiceRecognition.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) handleVoiceCommand(event.results[i][0].transcript);
+    }
+  };
+  voiceRecognition.onerror = (event) => {
+    const permissionErrors = ["not-allowed", "service-not-allowed"];
+    if (permissionErrors.includes(event.error)) {
+      voiceListening = false;
+      flashStatus("🎙️ ยังไม่ได้อนุญาตไมค์");
+    } else if (event.error !== "no-speech") {
+      flashStatus("🎙️ ฟังเสียงไม่สำเร็จ");
+    }
+  };
+  voiceRecognition.onend = () => {
+    voiceActive = false;
+    voiceBtn.classList.toggle("listening", voiceListening);
+    if (voiceListening && !preview.classList.contains("show")) {
+      setTimeout(() => {
+        if (voiceListening && !voiceActive) {
+          try { voiceRecognition.start(); } catch {}
+        }
+      }, 300);
+    }
+  };
+}
+function toggleVoice() {
+  if (!voiceRecognition) {
+    flashStatus("🎙️ เบราว์เซอร์นี้ยังไม่รองรับ");
+    return;
+  }
+  voiceListening = !voiceListening;
+  voiceBtn.classList.toggle("listening", voiceListening);
+  if (voiceListening) {
+    try { if (!voiceActive) voiceRecognition.start(); }
+    catch { flashStatus("🎙️ เปิดไมค์ไม่ได้"); }
+  } else {
+    flashStatus("🎙️ หยุดฟังแล้ว");
+    try { if (voiceActive) voiceRecognition.stop(); }
+    catch {}
+  }
 }
 
 // ---- hand-detection model ----
@@ -372,6 +527,7 @@ function setupCanvases() {
   display.width = W; display.height = H;
   strokeCanvas.width = W; strokeCanvas.height = H;
   sctx.clearRect(0, 0, W, H);   // changing camera resets the drawing
+  undoStack = [];
   lastDraw = null;
 }
 
@@ -404,7 +560,10 @@ function process(res) {
   const pinchDist = dist2(lm[4], lm[8]);          // thumb tip ↔ index tip
   const palm = dist2(lm[0], lm[9]) || 1;          // palm-length reference
   const ratio = pinchDist / palm;
-  if (!isPinching && ratio < 0.35) isPinching = true;
+  if (!isPinching && ratio < 0.35) {
+    pushUndoState();
+    isPinching = true;
+  }
   else if (isPinching && ratio > 0.50) isPinching = false;
 
   const mid = { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 };
@@ -517,7 +676,9 @@ retakeBtn.addEventListener("click", retake);
 downloadBtn.addEventListener("click", download);
 shareBtn.addEventListener("click", share);
 retryBtn.addEventListener("click", () => startCamera());
-clearBtn.addEventListener("click", () => { if (W) sctx.clearRect(0, 0, W, H); lastDraw = null; });
+undoBtn.addEventListener("click", undoDrawing);
+clearBtn.addEventListener("click", clearDrawing);
+voiceBtn.addEventListener("click", toggleVoice);
 
 switchBtn.addEventListener("click", () => {
   userMirrorOverride = null;            // back to auto when changing device
@@ -538,16 +699,13 @@ mirrorBtn.addEventListener("click", () => {
 
 toolbar.querySelectorAll(".swatch[data-color]").forEach(sw => {
   sw.addEventListener("click", () => {
-    toolbar.querySelectorAll(".swatch").forEach(s => s.classList.remove("active"));
-    sw.classList.add("active");
-    const v = sw.getAttribute("data-color");
-    isEraser = (v === "eraser");
-    if (!isEraser) color = v;
+    selectTool(sw.getAttribute("data-color"));
   });
 });
 document.addEventListener("keydown", (e) => {
   if (e.code === "Space" && !preview.classList.contains("show")) { e.preventDefault(); capture(); }
-  if (e.key === "c" && W) { sctx.clearRect(0, 0, W, H); lastDraw = null; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoDrawing(); }
+  if (e.key === "c") clearDrawing();
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !stream && !preview.classList.contains("show")) startCamera();
@@ -555,6 +713,7 @@ document.addEventListener("visibilitychange", () => {
 
 // ---- go ----
 shutter.disabled = true;
+setupVoiceRecognition();
 loadModel();
 startCamera();
 </script>
